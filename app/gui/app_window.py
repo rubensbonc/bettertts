@@ -1,3 +1,4 @@
+import threading
 import webbrowser
 import customtkinter as ctk
 
@@ -15,10 +16,21 @@ from app.gui.profiles_tab import ProfilesTab
 
 
 class AppWindow(ctk.CTk):
-    def __init__(self):
+    def __init__(self, updater=None):
         super().__init__()
         self.title("BetterTTS")
-        apply_window_theme(self)  # sets geometry, scaling, and colors
+        self._icon_path = None
+        apply_window_theme(self)
+
+        # Set window icon after window is fully initialized
+        try:
+            from app.updater import get_base_dir
+            icon_path = get_base_dir() / "icon.ico"
+            if icon_path.exists():
+                self._icon_path = str(icon_path)
+                self.after(0, self._set_icon)
+        except Exception:
+            pass
 
         self.config_data = load_config()
         self.gpu_info = get_gpu_info()
@@ -31,6 +43,11 @@ class AppWindow(ctk.CTk):
             config_data=self.config_data,
             port=self.config_data["port"],
         )
+
+        # Updater passed in from main.py so it's available immediately
+        self.updater = updater
+        self._update_banner = None
+        self._pending_update_version = None
 
         self._build_header()
         self._build_gpu_bar()
@@ -63,13 +80,38 @@ class AppWindow(ctk.CTk):
         if self.config_data.get("show_setup_guide", True):
             self.after(300, self._show_setup_wizard)
 
+    def _set_icon(self):
+        if not self._icon_path:
+            return
+        try:
+            self.iconbitmap(self._icon_path)
+            self.wm_iconbitmap(self._icon_path)
+        except Exception:
+            pass
+
+        # Force Windows taskbar to use our icon
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BetterTTS.App")
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            if not hwnd:
+                hwnd = self.winfo_id()
+            icon = ctypes.windll.user32.LoadImageW(
+                0, self._icon_path, 1, 0, 0, 0x10 | 0x2
+            )
+            if icon:
+                ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 1, icon)
+                ctypes.windll.user32.SendMessageW(hwnd, 0x0080, 0, icon)
+        except Exception:
+            pass
+
+    # ── Header ────────────────────────────────────────────────────────────────
+
     def _build_header(self):
-        """Branded title bar."""
         header = ctk.CTkFrame(self, fg_color=C.BG_DARK, height=48)
         header.pack(fill="x", padx=14, pady=(14, 0))
         header.pack_propagate(False)
 
-        # "Better" in accent, "TTS" in white
         title_frame = ctk.CTkFrame(header, fg_color="transparent")
         title_frame.pack(side="left")
 
@@ -87,27 +129,26 @@ class AppWindow(ctk.CTk):
             font=F.BODY_SM, text_color=C.TEXT_DIM,
         ).pack(side="left", padx=(12, 0))
 
-        # Credits & donation links (right side)
         links_frame = ctk.CTkFrame(header, fg_color="transparent")
         links_frame.pack(side="right")
 
-        donate_btn = ctk.CTkButton(
+        ctk.CTkButton(
             links_frame, text="Consider Donating to help out!", width=210, height=26,
             fg_color=C.SUCCESS_DIM, hover_color=C.SUCCESS,
             text_color="#ffffff", corner_radius=6,
             font=F.CAPTION,
             command=lambda: webbrowser.open("https://streamelements.com/kindredspiritva/tip"),
-        )
-        donate_btn.pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 8))
 
-        credit_btn = ctk.CTkButton(
+        ctk.CTkButton(
             links_frame, text="by @kindredspiritva", width=130, height=26,
             fg_color="transparent", hover_color=C.BG_HOVER,
             text_color=C.LINK, corner_radius=6,
             font=("Segoe UI", 11),
             command=lambda: webbrowser.open("https://twitter.com/kindredspirityt"),
-        )
-        credit_btn.pack(side="left")
+        ).pack(side="left")
+
+    # ── GPU bar ───────────────────────────────────────────────────────────────
 
     def _build_gpu_bar(self):
         gpu_card = card(self)
@@ -161,6 +202,147 @@ class AppWindow(ctk.CTk):
                 gpu_card, text=line2, text_color=C.TEXT_SEC,
                 font=F.CAPTION, wraplength=theme.WRAP_WIDE, justify="center",
             ).pack(pady=(2, 8), padx=14)
+
+    # ── Update banner ─────────────────────────────────────────────────────────
+
+    def notify_update_available(self, version: str):
+        """
+        Called from main.py when a newer release is found on GitHub.
+        Shows a dismissable banner above the tabs with Update / Dismiss buttons.
+        """
+        if self._update_banner is not None:
+            return  # already showing
+
+        self._pending_update_version = version
+
+        banner = ctk.CTkFrame(
+            self,
+            fg_color=("#1a2e1a", "#1a2e1a"),
+            corner_radius=10,
+            border_width=1,
+            border_color=C.SUCCESS_DIM,
+        )
+        banner.pack(fill="x", padx=14, pady=(0, 4), before=self.tabview)
+        self._update_banner = banner
+
+        inner = ctk.CTkFrame(banner, fg_color="transparent")
+        inner.pack(fill="x", padx=12, pady=8)
+
+        # Icon + message
+        ctk.CTkLabel(
+            inner,
+            text="⬆  Update Available",
+            font=F.BODY_SM,
+            text_color=C.SUCCESS,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            inner,
+            text=f"Version {version} is ready to install.",
+            font=F.BODY_SM,
+            text_color=C.TEXT_SEC,
+        ).pack(side="left", padx=(10, 0))
+
+        # Buttons on the right
+        btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_frame.pack(side="right")
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Dismiss",
+            width=80, height=26,
+            fg_color="transparent",
+            hover_color=C.BG_HOVER,
+            text_color=C.TEXT_DIM,
+            border_width=1,
+            border_color=C.SEPARATOR,
+            corner_radius=6,
+            font=F.CAPTION,
+            command=self._dismiss_update_banner,
+        ).pack(side="right", padx=(6, 0))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Update Now",
+            width=100, height=26,
+            fg_color=C.SUCCESS_DIM,
+            hover_color=C.SUCCESS,
+            text_color="#ffffff",
+            corner_radius=6,
+            font=F.CAPTION,
+            command=self._start_update,
+        ).pack(side="right")
+
+    def _dismiss_update_banner(self):
+        if self._update_banner is not None:
+            self._update_banner.destroy()
+            self._update_banner = None
+
+    def _start_update(self):
+        """Replace the banner with a progress indicator and kick off the download."""
+        print(f"[Updater] _start_update called — banner: {self._update_banner}, updater: {self.updater}")
+        if self._update_banner is None:
+            print("[Updater] No banner — ignoring")
+            return
+        if self.updater is None or self.updater._update_info is None:
+            print(f"[Updater] Updater not ready — updater={self.updater}")
+            return
+
+        # Clear banner contents and show progress UI
+        for widget in self._update_banner.winfo_children():
+            widget.destroy()
+
+        inner = ctk.CTkFrame(self._update_banner, fg_color="transparent")
+        inner.pack(fill="x", padx=12, pady=8)
+
+        self._update_status_label = ctk.CTkLabel(
+            inner,
+            text="Preparing update…",
+            font=F.BODY_SM,
+            text_color=C.SUCCESS,
+        )
+        self._update_status_label.pack(side="left")
+
+        self._update_progress = ctk.CTkProgressBar(
+            inner,
+            width=200, height=8,
+            fg_color=C.BG_INPUT,
+            progress_color=C.SUCCESS,
+            corner_radius=4,
+        )
+        self._update_progress.pack(side="left", padx=(12, 0))
+        self._update_progress.set(0)
+
+        def _on_progress(done, total):
+            if total > 0:
+                self.after(0, lambda: self._update_progress.set(done / total))
+                mb_done = done / (1024 * 1024)
+                mb_total = total / (1024 * 1024)
+                self.after(0, lambda: self._update_status_label.configure(
+                    text=f"Downloading… {mb_done:.1f} / {mb_total:.1f} MB"
+                ))
+
+        def _on_status(msg):
+            self.after(0, lambda: self._update_status_label.configure(text=msg))
+
+        def _on_error(err):
+            self.after(0, lambda: self._update_status_label.configure(
+                text=f"Update failed: {err}", text_color=C.ERROR
+            ))
+            self.after(0, lambda: self._update_progress.configure(
+                progress_color=C.ERROR
+            ))
+
+        self.updater._on_download_progress = _on_progress
+        self.updater._on_status = _on_status
+        self.updater._on_error = _on_error
+
+        threading.Thread(
+            target=self.updater.download_and_apply,
+            daemon=True
+        ).start()
+
+    # ── Rest of app ───────────────────────────────────────────────────────────
 
     def _show_setup_wizard(self):
         from app.gui.setup_wizard import SetupWizard

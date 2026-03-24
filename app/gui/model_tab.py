@@ -4,7 +4,7 @@ import customtkinter as ctk
 from app.constants import MODEL_VARIANTS, MODEL_VARIANT_MAP
 from app.model_manager import ModelState
 import app.gui.theme as theme
-from app.gui.theme import C, F, BTN_PRIMARY, BTN_SECONDARY, card
+from app.gui.theme import C, F, BTN_PRIMARY, BTN_SECONDARY, BTN_DANGER, card
 from app.gui.widgets import SectionHeader, InfoLabel, CardFrame
 
 
@@ -81,7 +81,9 @@ class ModelTab:
 
         self.unload_btn = ctk.CTkButton(
             btn_frame, text="Unload Model", command=self._unload_clicked,
-            width=140, height=38, state="disabled", **BTN_SECONDARY,
+            width=140, height=38, state="disabled",
+            fg_color="#334155", hover_color="#475569",
+            text_color=C.TEXT_SEC, corner_radius=8,
         )
         self.unload_btn.pack(side="left")
 
@@ -141,35 +143,89 @@ class ModelTab:
         self._load_clicked()
 
     def _unload_clicked(self):
-        self.app.model_manager.unload_model()
+        self.unload_btn.configure(state="disabled", text="Unloading...")
+        self.load_btn.configure(state="disabled")
+        threading.Thread(
+            target=self.app.model_manager.unload_model,
+            daemon=True,
+        ).start()
 
     def update_state(self, state: ModelState, error: str):
-        if state == ModelState.READY:
-            variant = self.app.model_manager.current_variant
-            self.status_label.configure(
-                text=f"Model loaded: {variant.display_name}" if variant else "Model ready",
-                text_color=C.SUCCESS,
-            )
-            self.load_btn.configure(state="normal", text="Load Model")
-            self.unload_btn.configure(state="normal")
-            self.model_menu.configure(state="normal")
-        elif state == ModelState.DOWNLOADING:
-            self.status_label.configure(
-                text="Downloading model (first time only, this may take a few minutes)...",
-                text_color=C.WARNING,
-            )
-        elif state == ModelState.LOADING:
-            self.status_label.configure(
-                text="Loading model onto GPU...", text_color=C.WARNING,
-            )
-        elif state == ModelState.ERROR:
-            self.status_label.configure(
-                text=f"Error: {error[:200]}", text_color=C.ERROR,
-            )
-            self.load_btn.configure(state="normal", text="Retry Load")
-            self.model_menu.configure(state="normal")
-        elif state == ModelState.UNLOADED:
-            self.status_label.configure(text="No model loaded", text_color=C.TEXT_DIM)
-            self.load_btn.configure(state="normal", text="Load Model")
-            self.unload_btn.configure(state="disabled")
-            self.model_menu.configure(state="normal")
+        try:
+            if state == ModelState.READY:
+                variant = self.app.model_manager.current_variant
+                self.status_label.configure(
+                    text=f"Model loaded: {variant.display_name}" if variant else "Model ready",
+                    text_color=C.SUCCESS,
+                )
+                # Load button goes grey (inactive) — model is already loaded
+                self.load_btn.configure(
+                    state="disabled", text="Load Model",
+                    fg_color=C.BG_INPUT, hover_color=C.BG_INPUT,
+                    text_color=C.TEXT_DIM,
+                )
+                # Unload button goes red (active)
+                self.unload_btn.configure(
+                    state="normal", text="Unload Model",
+                    fg_color=C.ERROR_DIM, hover_color=C.ERROR,
+                    text_color="#ffffff",
+                )
+                self.model_menu.configure(state="disabled")
+
+            elif state == ModelState.DOWNLOADING:
+                self.status_label.configure(
+                    text="Downloading model (first time only, this may take a few minutes)...",
+                    text_color=C.WARNING,
+                )
+                self.load_btn.configure(state="disabled", text="Downloading...")
+                self.unload_btn.configure(state="disabled")
+                self.model_menu.configure(state="disabled")
+
+            elif state == ModelState.LOADING:
+                self.status_label.configure(
+                    text="Loading model onto GPU...", text_color=C.WARNING,
+                )
+                self.load_btn.configure(state="disabled", text="Loading...")
+                self.unload_btn.configure(state="disabled")
+                self.model_menu.configure(state="disabled")
+
+            elif state == ModelState.ERROR:
+                self.status_label.configure(
+                    text=f"Error: {error[:200]}", text_color=C.ERROR,
+                )
+                self.load_btn.configure(
+                    state="normal", text="Retry Load",
+                    fg_color=C.ACCENT, hover_color=C.ACCENT_HOVER,
+                    text_color="#ffffff",
+                )
+                self.unload_btn.configure(
+                    state="disabled", text="Unload Model",
+                    fg_color="#334155", hover_color="#475569",
+                    text_color=C.TEXT_SEC,
+                )
+                self.model_menu.configure(state="normal")
+
+            elif state == ModelState.UNLOADED:
+                self.status_label.configure(
+                    text="No model loaded", text_color=C.TEXT_DIM,
+                )
+                # Load button goes back to primary blue (active)
+                self.load_btn.configure(
+                    state="normal", text="Load Model",
+                    fg_color=C.ACCENT, hover_color=C.ACCENT_HOVER,
+                    text_color="#ffffff",
+                )
+                # Unload button goes secondary (grey) — nothing loaded, safe state
+                self.unload_btn.configure(
+                    state="disabled", text="Unload Model",
+                    fg_color="#334155", hover_color="#475569",
+                    text_color=C.TEXT_SEC,
+                )
+                self.model_menu.configure(state="normal")
+
+            # Force tkinter to process the UI update immediately
+            self.parent.update_idletasks()
+
+        except Exception as e:
+            # Widget may have been destroyed — ignore
+            print(f"[ModelTab] update_state error: {e}")

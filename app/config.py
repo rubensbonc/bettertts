@@ -1,7 +1,17 @@
 import json
+import sys
 from pathlib import Path
 
-APP_DIR = Path(__file__).parent.parent
+
+def get_base_dir() -> Path:
+    """Get the real app directory whether running frozen (PyInstaller) or as a script."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent.parent
+
+
+APP_DIR = get_base_dir()
 CONFIG_PATH = APP_DIR / "config.json"
 
 DEFAULTS = {

@@ -1,0 +1,128 @@
+name: Build & Release BetterTTS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements_build.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Only installs customtkinter + pyinstaller
+      # PyTorch is NOT installed here — it gets installed at runtime
+      # by the setup wizard with the correct CUDA version for the user's GPU
+      - name: Install build dependencies
+        run: pip install -r requirements_build.txt
+
+      - name: Write version.txt
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ($version -eq "" -or $version -eq "main") {
+            $version = "0.0.0"
+          }
+          $version | Out-File -FilePath version.txt -Encoding utf8 -NoNewline
+          Write-Host "Version: $version"
+
+      - name: Build BetterTTS.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --onefile `
+            --windowed `
+            --name BetterTTS `
+            --icon=icon.ico `
+            --collect-all=customtkinter `
+            app/launcher.py
+
+      - name: Build update_helper.exe
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --onefile `
+            --windowed `
+            --name update_helper `
+            --collect-all=customtkinter `
+            app/update_helper.py
+
+      - name: Copy runtime files into dist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "dist\BetterTTS" -Force | Out-Null
+          if (Test-Path "dist\BetterTTS.exe") {
+            Move-Item -Path "dist\BetterTTS.exe" -Destination "dist\BetterTTS\BetterTTS.exe" -Force
+          }
+          Copy-Item -Path "profiles.json"                    -Destination "dist\BetterTTS\" -Force
+          Copy-Item -Path "requirements.txt"                 -Destination "dist\BetterTTS\" -Force
+          Copy-Item -Path "app" -Destination "dist\BetterTTS\app" -Recurse -Force
+          Copy-Item -Path "version.txt"                      -Destination "dist\BetterTTS\" -Force
+          Copy-Item -Path "icon.ico"                         -Destination "dist\BetterTTS\" -Force
+          Copy-Item -Path "BetterTTS_Streamerbot_Import.txt" -Destination "dist\BetterTTS\" -Force
+          Copy-Item -Path "dist\update_helper.exe"             -Destination "dist\BetterTTS\" -Force
+          New-Item -ItemType Directory -Path "dist\BetterTTS\voices" -Force | Out-Null
+          # Remove __pycache__ folders — not needed for distribution
+          Get-ChildItem -Path "dist\BetterTTS" -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force
+
+      - name: Zip release
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          if ($version -eq "" -or $version -eq "main") { $version = "dev" }
+          $zipName = "bettertts-windows-x64.zip"
+          Compress-Archive -Path "dist\BetterTTS\*" -DestinationPath $zipName
+          Write-Host "Created: $zipName"
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BetterTTS-windows
+          path: ${{ env.ZIP_NAME }}
+          retention-days: 14
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BetterTTS ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: ${{ env.ZIP_NAME }}
+          body: |
+            ## BetterTTS ${{ github.ref_name }}
+
+            ### Installation
+            1. Download `bettertts-windows-x64.zip`
+            2. Extract the zip anywhere on your PC
+            3. Run `BetterTTS.exe`
+            4. The setup wizard will automatically install PyTorch with the correct
+               CUDA version for your GPU and all other dependencies
+
+            ### Requirements
+            - Windows 10 or 11
+            - NVIDIA GPU recommended (4+ GB VRAM) — runs on CPU too, just slower
+            - ~5-8 GB free disk space for model and dependencies
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

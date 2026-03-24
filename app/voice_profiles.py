@@ -1,11 +1,20 @@
 import json
+import sys
 import shutil
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
 
-APP_DIR = Path(__file__).parent.parent
+def get_base_dir() -> Path:
+    """Get the real app directory whether running frozen (PyInstaller) or as a script."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent.parent
+
+
+APP_DIR = get_base_dir()
 VOICES_DIR = APP_DIR / "voices"
 PROFILES_PATH = APP_DIR / "profiles.json"
 

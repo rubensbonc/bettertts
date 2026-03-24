@@ -129,3 +129,14 @@ LANGUAGES = [
 ]
 
 DEFAULT_PORT = 7861
+
+APP_VERSION = "0.0.1"
+
+# Supported Python versions as (major, minor) tuples.
+# Bootstrap reads this to validate the running Python version.
+# Add or remove entries here to change what versions are accepted.
+SUPPORTED_PYTHON_VERSIONS = [
+    (3, 10),
+    (3, 11),
+    (3, 12),
+]

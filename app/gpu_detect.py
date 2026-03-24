@@ -1,5 +1,14 @@
 import subprocess
+import sys
 from pathlib import Path
+
+
+def get_base_dir() -> Path:
+    """Get the real app directory whether running frozen (PyInstaller) or as a script."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent.parent
 
 
 def _detect_gpu_name_powershell() -> str:
@@ -30,8 +39,8 @@ def _detect_gpu_name_powershell() -> str:
 
 
 def _read_gpu_type_file() -> str:
-    """Read the GPU type saved by setup.bat."""
-    gpu_file = Path(__file__).parent.parent / ".gpu_type"
+    """Read the GPU type saved by setup."""
+    gpu_file = get_base_dir() / ".gpu_type"
     if gpu_file.exists():
         return gpu_file.read_text().strip().lower()
     return ""
@@ -84,11 +93,11 @@ def get_gpu_info() -> dict:
     gpu_name = _detect_gpu_name_powershell()
     saved_type = _read_gpu_type_file()
 
-    # If setup.bat detected NVIDIA but torch.cuda isn't available,
+    # If setup detected NVIDIA but torch.cuda isn't available,
     # show the GPU name but note CUDA isn't working
     backend_note = "CPU"
     if saved_type == "nvidia" and gpu_name != "Unknown":
-        backend_note = "CPU (CUDA unavailable — try re-running setup.bat)"
+        backend_note = "CPU (CUDA unavailable — try re-running setup)"
 
     return {
         "available": False,

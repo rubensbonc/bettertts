@@ -13,7 +13,8 @@ venv/
 .gpu_type
 voices/
 config.json
-
+*.spec
+git 
 # IDE
 .vscode/
 .idea/
